@@ -18,6 +18,9 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 #include <chrono>
 #include <string>
 #include <chrono>
+#include <cstdlib>
+
+#include "replxx.hxx"
 
 #include "towns.h"
 #include "townsthread.h"
@@ -63,11 +66,45 @@ public:
 
 	if(true==argv.interactive)
 	{
+		replxx::Replxx rx;
+		rx.set_max_history_size(1000);
+
+		// Try to load history from user's home directory
+		std::string historyFile;
+		if(const char* home = std::getenv("HOME"))
+		{
+			historyFile = std::string(home) + "/.tsugaru_history";
+		}
+#ifdef _WIN32
+		else if(const char* userProfile = std::getenv("USERPROFILE"))
+		{
+			historyFile = std::string(userProfile) + "/.tsugaru_history";
+		}
+#endif
+		if(!historyFile.empty())
+		{
+			rx.history_load(historyFile);
+		}
+
 		while(true!=uiTerminate)
 		{
+			const char* input = rx.input(">");
+
 			std::string cmdline;
-			std::cout << ">";
-			std::getline(std::cin,cmdline);
+			if(input == nullptr)
+			{
+				// EOF (Ctrl+D) - treat as quit
+				cmdline = "QUIT";
+			}
+			else
+			{
+				cmdline = input;
+			}
+
+			if(!cmdline.empty())
+			{
+				rx.history_add(cmdline);
+			}
 
 			uiLock.lock();
 			this->cmdline=cmdline;
@@ -92,6 +129,11 @@ public:
 				}
 				uiLock.unlock();
 			}
+		}
+
+		if(!historyFile.empty())
+		{
+			rx.history_save(historyFile);
 		}
 	}
 }

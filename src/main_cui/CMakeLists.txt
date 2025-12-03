@@ -7,13 +7,14 @@ set(TESTDATA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../testdata)
 
 
 add_executable(Tsugaru_CUI MACOSX_BUNDLE main.cpp ../resources/tsugaru_icon.rc)
-target_link_libraries(${TARGET_NAME} 
-	towns 
-	townscommand 
+target_link_libraries(${TARGET_NAME}
+	towns
+	townscommand
 	townsargv
-	townsrender 
+	townsrender
 	outside_world
 	fssimplewindow_connection
+	replxx
 )
 
 if(UNIX)

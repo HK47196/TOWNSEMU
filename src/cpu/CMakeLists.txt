@@ -1,3 +1,5 @@
+find_package(SQLite3 REQUIRED)
+
 add_library(cpu
 cpu.h
 cpu.cpp
@@ -22,6 +24,8 @@ i486runinstruction.h
 i486templatefunctions.h
 i486debugVxD.cpp
 i486garbage.cpp
+i486trace.h
+i486trace.cpp
 )
-target_link_libraries(cpu device ramrom inout cpputil)
+target_link_libraries(cpu device ramrom inout cpputil SQLite::SQLite3)
 target_include_directories(cpu PUBLIC .)

@@ -37,8 +37,18 @@ inline void i486DXFidelityLayer <FIDELITY>::Interrupt(unsigned int INTNum,Memory
 			    destCS,destIP,
 			    mem);
 		}
+		auto origLinearPC=state.LinearPC();
 		LoadSegmentRegisterRealMode(state.CS(),destCS);
 		state.EIP=destIP;
+		if(nullptr!=traceRecorder && traceRecorder->IsActive())
+		{
+			traceRecorder->OnCall(
+			    origLinearPC,
+			    state.LinearPC(),
+			    state.ESP(),
+			    TraceRecorder::CALL_INT,
+			    INTNum);
+		}
 
 		state.EFLAGS&=(~(EFLAGS_INT_ENABLE|EFLAGS_TRAP));
 		// SetIF(false);
@@ -49,6 +59,7 @@ inline void i486DXFidelityLayer <FIDELITY>::Interrupt(unsigned int INTNum,Memory
 		auto desc=GetInterruptDescriptor(INTNum,mem);
 		if(FarPointer::NO_SEG!=desc.SEG)
 		{
+			auto origLinearPC=state.LinearPC();
 			const auto type=desc.GetType();
 			unsigned int gateOperandSize=32;
 			bool isINTGate=true; // false if it is a trap gate.
@@ -114,7 +125,6 @@ inline void i486DXFidelityLayer <FIDELITY>::Interrupt(unsigned int INTNum,Memory
 				    desc.SEG,desc.OFFSET,
 				    mem);
 			}
-
 			auto gateDPL=desc.GetDPL();
 			// Apparently it should be IDT's DPL, not newCS's DPL.
 			auto CPL=state.CS().DPL;
@@ -182,6 +192,15 @@ inline void i486DXFidelityLayer <FIDELITY>::Interrupt(unsigned int INTNum,Memory
 				{
 					state.EFLAGS&=(~(EFLAGS_NESTED|EFLAGS_TRAP));
 				}
+				if(nullptr!=traceRecorder && traceRecorder->IsActive())
+				{
+					traceRecorder->OnCall(
+					    origLinearPC,
+					    state.LinearPC(),
+					    state.ESP(),
+					    TraceRecorder::CALL_INT,
+					    INTNum);
+				}
 			}
 			else // Interrupt from Virtual86 mode
 			{
@@ -229,6 +248,15 @@ inline void i486DXFidelityLayer <FIDELITY>::Interrupt(unsigned int INTNum,Memory
 
 					SetIPorEIP(gateOperandSize,desc.OFFSET);
 					LoadSegmentRegister(state.CS(),desc.SEG,mem);
+					if(nullptr!=traceRecorder && traceRecorder->IsActive())
+					{
+						traceRecorder->OnCall(
+						    origLinearPC,
+						    state.LinearPC(),
+						    state.ESP(),
+						    TraceRecorder::CALL_INT,
+						    INTNum);
+					}
 				}
 			}
 		}

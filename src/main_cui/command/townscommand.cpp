@@ -26,6 +26,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 #include "yspngenc.h"
 
 #include "i486debugmemaccess.h"
+#include "i486trace.h"
 
 #include "townscommand.h"
 #include "townscommandutil.h"
@@ -252,6 +253,12 @@ TownsCommandInterpreter::TownsCommandInterpreter()
 
 	primaryCmdMap["DBLOG"]=CMD_OPEN_DEBUG_LOG;
 	primaryCmdMap["CDBLOG"]=CMD_CLOSE_DEBUG_LOG;
+
+	primaryCmdMap["TRACE"]=CMD_TRACE;
+	primaryCmdMap["STARTTRACE"]=CMD_TRACE;
+	primaryCmdMap["STOPTRACE"]=CMD_STOPTRACE;
+	primaryCmdMap["CTRACE"]=CMD_STOPTRACE;
+	primaryCmdMap["TRACESTATS"]=CMD_TRACESTATS;
 
 
 	featureMap["CMDLOG"]=ENABLE_CMDLOG;
@@ -1927,6 +1934,147 @@ void TownsCommandInterpreter::Execute(TownsThread &thr,FMTownsCommon &towns,clas
 	case CMD_CLOSE_DEBUG_LOG:
 		towns.debugger.CloseLogFile();
 		std::cout << "Closed log file." << std::endl;
+		break;
+
+	case CMD_TRACE:
+		if(2<=cmd.argv.size())
+		{
+			TraceRecorder::Config cfg;
+			std::string dbPath=cmd.argv[1];
+
+			for(size_t i=2; i<cmd.argv.size(); ++i)
+			{
+				auto arg=cmd.argv[i];
+				cpputil::Capitalize(arg);
+				if(arg=="-NOMEMR")
+				{
+					cfg.captureMemRead=false;
+				}
+				else if(arg=="-NOMEMW")
+				{
+					cfg.captureMemWrite=false;
+				}
+				else if(arg=="-NOCALL")
+				{
+					cfg.captureCall=false;
+					cfg.captureRet=false;
+				}
+				else if(arg=="-SNAPINT" && i+1<cmd.argv.size())
+				{
+					cfg.snapshotInterval=cpputil::Atoi(cmd.argv[++i].c_str());
+				}
+				else if(arg=="-MEMRANGE" && i+2<cmd.argv.size())
+				{
+					uint32_t start=cpputil::Atoi(cmd.argv[++i].c_str());
+					uint32_t end=cpputil::Atoi(cmd.argv[++i].c_str());
+					cfg.memRanges.push_back({start,end});
+				}
+				else if(arg=="-PCRANGE" && i+2<cmd.argv.size())
+				{
+					uint32_t start=cpputil::Atoi(cmd.argv[++i].c_str());
+					uint32_t end=cpputil::Atoi(cmd.argv[++i].c_str());
+					cfg.pcRanges.push_back({start,end});
+				}
+				else if(arg=="-ADAPTIVE" && i+1<cmd.argv.size())
+				{
+					cfg.adaptiveThreshold=cpputil::Atoi(cmd.argv[++i].c_str());
+				}
+			}
+
+			if(nullptr==towns.CPU().traceRecorder)
+			{
+				towns.CPU().traceRecorder=new TraceRecorder();
+			}
+			if(towns.CPU().traceRecorder->IsActive())
+			{
+				std::cout << "Trace already active. Use STOPTRACE first." << std::endl;
+			}
+			else if(towns.CPU().traceRecorder->Start(dbPath,cfg))
+			{
+				std::cout << "Trace started: " << dbPath << std::endl;
+				if(!cfg.captureMemRead) std::cout << "  Memory reads: disabled" << std::endl;
+				if(!cfg.captureMemWrite) std::cout << "  Memory writes: disabled" << std::endl;
+				if(!cfg.captureCall) std::cout << "  Calls: disabled" << std::endl;
+				if(!cfg.memRanges.empty())
+				{
+					std::cout << "  Memory ranges: ";
+					for(const auto& r : cfg.memRanges)
+					{
+						std::cout << cpputil::Uitox(r.first) << "-" << cpputil::Uitox(r.second) << " ";
+					}
+					std::cout << std::endl;
+				}
+				if(!cfg.pcRanges.empty())
+				{
+					std::cout << "  PC ranges: ";
+					for(const auto& r : cfg.pcRanges)
+					{
+						std::cout << cpputil::Uitox(r.first) << "-" << cpputil::Uitox(r.second) << " ";
+					}
+					std::cout << std::endl;
+				}
+				if(cfg.adaptiveThreshold > 0)
+				{
+					std::cout << "  Adaptive threshold: " << cfg.adaptiveThreshold << std::endl;
+				}
+			}
+			else
+			{
+				std::cout << "Failed to start trace." << std::endl;
+			}
+		}
+		else
+		{
+			std::cout << "Usage: TRACE filename.db [options]" << std::endl;
+			std::cout << "  Options:" << std::endl;
+			std::cout << "    -NOMEMR         Disable memory read capture" << std::endl;
+			std::cout << "    -NOMEMW         Disable memory write capture" << std::endl;
+			std::cout << "    -NOCALL         Disable call/ret capture" << std::endl;
+			std::cout << "    -MEMRANGE start end   Only capture memory ops to addresses in range" << std::endl;
+			std::cout << "    -PCRANGE start end    Only capture memory ops from code in range" << std::endl;
+			std::cout << "    -ADAPTIVE n     Cap hot addresses after n unique values (0 = disabled)" << std::endl;
+			std::cout << "    -SNAPINT n      Snapshot interval in instructions (0 = disabled)" << std::endl;
+		}
+		break;
+
+	case CMD_STOPTRACE:
+		if(nullptr!=towns.CPU().traceRecorder && towns.CPU().traceRecorder->IsActive())
+		{
+			towns.CPU().traceRecorder->Stop();
+			std::cout << "Trace stopped." << std::endl;
+			std::cout << "  Total events: " << towns.CPU().traceRecorder->GetEventCount() << std::endl;
+			std::cout << "  Total instructions: " << towns.CPU().traceRecorder->GetInstructionCount() << std::endl;
+			auto dropped = towns.CPU().traceRecorder->GetDroppedEvents();
+			auto dbErr = towns.CPU().traceRecorder->GetDbErrors();
+			if (dropped > 0)
+			{
+				std::cout << "  WARNING: " << dropped << " events dropped (queue overflow)" << std::endl;
+			}
+			if (dbErr > 0)
+			{
+				std::cout << "  WARNING: " << dbErr << " database errors" << std::endl;
+			}
+		}
+		else
+		{
+			std::cout << "No active trace." << std::endl;
+		}
+		break;
+
+	case CMD_TRACESTATS:
+		if(nullptr!=towns.CPU().traceRecorder)
+		{
+			std::cout << "Trace status: " << (towns.CPU().traceRecorder->IsActive() ? "active" : "inactive") << std::endl;
+			std::cout << "  Sequence number: " << towns.CPU().traceRecorder->GetSeq() << std::endl;
+			std::cout << "  Total events: " << towns.CPU().traceRecorder->GetEventCount() << std::endl;
+			std::cout << "  Total instructions: " << towns.CPU().traceRecorder->GetInstructionCount() << std::endl;
+			std::cout << "  Dropped events: " << towns.CPU().traceRecorder->GetDroppedEvents() << std::endl;
+			std::cout << "  Database errors: " << towns.CPU().traceRecorder->GetDbErrors() << std::endl;
+		}
+		else
+		{
+			std::cout << "No trace recorder initialized." << std::endl;
+		}
 		break;
 	}
 }

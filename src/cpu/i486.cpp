@@ -383,7 +383,7 @@ std::vector <std::string> i486DXCommon::GetStateText(void) const
 	text.push_back(
 	     "CS:EIP="
 	    +cpputil::Ustox(state.CS().value)+":"+cpputil::Uitox(state.EIP)
-	    +"  LINEAR:"+cpputil::Uitox(state.CS().baseLinearAddr+state.EIP)
+	    +"  LINEAR:"+cpputil::Uitox(state.LinearPC())
 	    +"  EFLAGS="+cpputil::Uitox(state.EFLAGS)
 	    +"  CPL="+cpputil::Ubtox(state.CS().DPL));
 

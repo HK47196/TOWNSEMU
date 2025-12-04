@@ -135,6 +135,12 @@ void TownsThread::VMMainLoopTemplate(
 					townsPtr->RunScheduledTasks();
 					townsPtr->RunFastDevicePolling();
 
+					if(nullptr!=townsPtr->CPU().traceRecorder &&
+					   townsPtr->CPU().traceRecorder->NeedsSnapshot())
+					{
+						townsPtr->CPU().traceRecorder->TakeSnapshot(townsPtr->SaveStateMem());
+					}
+
 					if(true==townsPtr->debugger.stop)
 					{
 						if(true==townsPtr->debugger.lastBreakPointInfo.ShouldBreak() &&
@@ -241,6 +247,11 @@ void TownsThread::VMMainLoopTemplate(
 				townsPtr->pic.ProcessIRQ(townsPtr->CPU(),townsPtr->mem);
 				townsPtr->RunFastDevicePolling();
 				townsPtr->RunScheduledTasks();
+				if(nullptr!=townsPtr->CPU().traceRecorder &&
+				   townsPtr->CPU().traceRecorder->NeedsSnapshot())
+				{
+					townsPtr->CPU().traceRecorder->TakeSnapshot(townsPtr->SaveStateMem());
+				}
 			}
 			PrintStatus(*townsPtr);
 			std::cout << ">";
@@ -416,6 +427,7 @@ void TownsThread::AdjustRealTime(FMTownsCommon *townsPtr,long long int cpuTimePa
 			while(townsPtr->state.timeDeficit+realTimePassed<cpuTimePassed)
 			{
 				townsPtr->ProcessSound(outside_world);
+				std::this_thread::yield();
 				realTimePassed=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now()-time0).count();
 			}
 			int64_t newBalance=cpuTimePassed-(townsPtr->state.timeDeficit+realTimePassed);

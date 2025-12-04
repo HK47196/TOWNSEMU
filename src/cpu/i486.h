@@ -28,6 +28,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 #include "inout.h"
 #include "cpputil.h"
 #include "i486inst.h"
+#include "i486trace.h"
 
 
 // #define YS_CPU_DEBUG
@@ -47,6 +48,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 //   Move function should raise protection fault / real-mode exception
 
 class i486SymbolTable;
+class TraceRecorder;
 
 
 /*
@@ -991,6 +993,11 @@ public:
 			return sreg[REG_GS-REG_SEGMENT_REG_BASE];
 		}
 
+		inline uint32_t LinearPC() const
+		{
+			return CS().baseLinearAddr + EIP;
+		}
+
 		/*! Returns Segment-Register.  REG must be REG_CS,REG_DS,REG_ES,REG_FS,REG_FS,REG_SS.
 		*/
 		inline SegmentRegister GetSegmentRegister(unsigned int reg) const
@@ -1634,6 +1641,7 @@ public:
 	bool enableCallStack;
 	std::vector <CallStack> callStack;
 	class i486Debugger *debuggerPtr;
+	TraceRecorder *traceRecorder = nullptr;
 
 
 	/*! Make a call-stack entry.
@@ -4030,14 +4038,25 @@ inline unsigned int i486DXFidelityLayer<FIDELITY>::FetchByte(unsigned int addres
 	   // nullptr!=state.SSESPWindow.ptr &&
 	   true==state.SSESPWindow.IsLinearAddressInRange(addr))
 	{
-		return state.SSESPWindow.ptr[addr&(MemoryAccess::MEMORY_WINDOW_SIZE-1)];
+		uint8_t val=state.SSESPWindow.ptr[addr&(MemoryAccess::MEMORY_WINDOW_SIZE-1)];
+		if(nullptr!=traceRecorder && traceRecorder->IsActive())
+		{
+			traceRecorder->OnMemRead(state.LinearPC(),addr,1,val);
+		}
+		return val;
 	}
 
+	auto linearAddr=addr;
 	if(true==PagingEnabled())
 	{
 		addr=LinearAddressToPhysicalAddressRead(addr,mem);
 	}
-	return mem.FetchByte(addr);
+	uint8_t val=mem.FetchByte(addr);
+	if(nullptr!=traceRecorder && traceRecorder->IsActive())
+	{
+		traceRecorder->OnMemRead(state.LinearPC(),linearAddr,1,val);
+	}
+	return val;
 }
 
 template <class FIDELITY>
@@ -4059,10 +4078,16 @@ inline unsigned int i486DXFidelityLayer<FIDELITY>::FetchWord(unsigned int addres
 		unsigned int low12bits=(addr&(MemoryAccess::MEMORY_WINDOW_SIZE-1));
 		if(low12bits<=MemoryAccess::MEMORY_WINDOW_SIZE-2)
 		{
-			return cpputil::GetWord(state.SSESPWindow.ptr+low12bits);
+			uint16_t val=cpputil::GetWord(state.SSESPWindow.ptr+low12bits);
+			if(nullptr!=traceRecorder && traceRecorder->IsActive())
+			{
+				traceRecorder->OnMemRead(state.LinearPC(),addr,2,val);
+			}
+			return val;
 		}
 	}
 
+	auto linearAddr=addr;
 	if(true==PagingEnabled())
 	{
 		addr=LinearAddressToPhysicalAddressRead(addr,mem);
@@ -4071,7 +4096,12 @@ inline unsigned int i486DXFidelityLayer<FIDELITY>::FetchWord(unsigned int addres
 			return FetchByte(addressSize,seg,offset,mem)|(FetchByte(addressSize,seg,offset+1,mem)<<8);
 		}
 	}
-	return mem.FetchWord(addr);
+	uint16_t val=mem.FetchWord(addr);
+	if(nullptr!=traceRecorder && traceRecorder->IsActive())
+	{
+		traceRecorder->OnMemRead(state.LinearPC(),linearAddr,2,val);
+	}
+	return val;
 }
 
 template <class FIDELITY>
@@ -4093,10 +4123,16 @@ inline unsigned int i486DXFidelityLayer<FIDELITY>::FetchDword(unsigned int addre
 		unsigned int low12bits=(addr&(MemoryAccess::MEMORY_WINDOW_SIZE-1));
 		if(low12bits<=MemoryAccess::MEMORY_WINDOW_SIZE-4)
 		{
-			return cpputil::GetDword(state.SSESPWindow.ptr+low12bits);
+			uint32_t val=cpputil::GetDword(state.SSESPWindow.ptr+low12bits);
+			if(nullptr!=traceRecorder && traceRecorder->IsActive())
+			{
+				traceRecorder->OnMemRead(state.LinearPC(),addr,4,val);
+			}
+			return val;
 		}
 	}
 
+	auto linearAddr=addr;
 	if(true==PagingEnabled())
 	{
 		addr=LinearAddressToPhysicalAddressRead(addr,mem);
@@ -4109,7 +4145,12 @@ inline unsigned int i486DXFidelityLayer<FIDELITY>::FetchDword(unsigned int addre
 			     FetchByte(addressSize,seg,offset+3,mem));
 		}
 	}
-	return mem.FetchDword(addr);
+	uint32_t val=mem.FetchDword(addr);
+	if(nullptr!=traceRecorder && traceRecorder->IsActive())
+	{
+		traceRecorder->OnMemRead(state.LinearPC(),linearAddr,4,val);
+	}
+	return val;
 }
 
 template <class FIDELITY>
@@ -4128,7 +4169,17 @@ inline void i486DXFidelityLayer<FIDELITY>::StoreByte(Memory &mem,int addressSize
 	   // nullptr!=state.SSESPWindow.ptr &&
 	   true==state.SSESPWindow.IsLinearAddressInRange(linearAddr))
 	{
-		state.SSESPWindow.ptr[linearAddr&(MemoryAccess::MEMORY_WINDOW_SIZE-1)]=byteData;
+		auto windowOffset=linearAddr&(MemoryAccess::MEMORY_WINDOW_SIZE-1);
+		if(nullptr!=traceRecorder && traceRecorder->IsActive())
+		{
+			uint8_t oldVal=state.SSESPWindow.ptr[windowOffset];
+			state.SSESPWindow.ptr[windowOffset]=byteData;
+			traceRecorder->OnMemWrite(state.LinearPC(),linearAddr,1,oldVal,byteData);
+		}
+		else
+		{
+			state.SSESPWindow.ptr[windowOffset]=byteData;
+		}
 		return;
 	}
 
@@ -4137,7 +4188,16 @@ inline void i486DXFidelityLayer<FIDELITY>::StoreByte(Memory &mem,int addressSize
 	{
 		physicalAddr=LinearAddressToPhysicalAddressWrite(linearAddr,mem);
 	}
-	return mem.StoreByte(physicalAddr,byteData);
+	if(nullptr!=traceRecorder && traceRecorder->IsActive())
+	{
+		uint8_t oldVal=mem.FetchByte(physicalAddr);
+		mem.StoreByte(physicalAddr,byteData);
+		traceRecorder->OnMemWrite(state.LinearPC(),linearAddr,1,oldVal,byteData);
+	}
+	else
+	{
+		mem.StoreByte(physicalAddr,byteData);
+	}
 }
 
 template <class FIDELITY>
@@ -4159,7 +4219,16 @@ inline void i486DXFidelityLayer<FIDELITY>::StoreWord(Memory &mem,int addressSize
 		unsigned int low12bits=(linearAddr&(MemoryAccess::MEMORY_WINDOW_SIZE-1));
 		if(low12bits<=MemoryAccess::MEMORY_WINDOW_SIZE-2)
 		{
-			cpputil::PutWord(state.SSESPWindow.ptr+low12bits,data);
+			if(nullptr!=traceRecorder && traceRecorder->IsActive())
+			{
+				uint16_t oldVal=cpputil::GetWord(state.SSESPWindow.ptr+low12bits);
+				cpputil::PutWord(state.SSESPWindow.ptr+low12bits,data);
+				traceRecorder->OnMemWrite(state.LinearPC(),linearAddr,2,oldVal,data&0xFFFF);
+			}
+			else
+			{
+				cpputil::PutWord(state.SSESPWindow.ptr+low12bits,data);
+			}
 			return;
 		}
 	}
@@ -4175,7 +4244,16 @@ inline void i486DXFidelityLayer<FIDELITY>::StoreWord(Memory &mem,int addressSize
 			return;
 		}
 	}
-	mem.StoreWord(physicalAddr,data);
+	if(nullptr!=traceRecorder && traceRecorder->IsActive())
+	{
+		uint16_t oldVal=mem.FetchWord(physicalAddr);
+		mem.StoreWord(physicalAddr,data);
+		traceRecorder->OnMemWrite(state.LinearPC(),linearAddr,2,oldVal,data&0xFFFF);
+	}
+	else
+	{
+		mem.StoreWord(physicalAddr,data);
+	}
 }
 template <class FIDELITY>
 inline void i486DXFidelityLayer<FIDELITY>::StoreDword(Memory &mem,int addressSize,const SegmentRegister &seg,unsigned int offset,unsigned int data)
@@ -4196,7 +4274,16 @@ inline void i486DXFidelityLayer<FIDELITY>::StoreDword(Memory &mem,int addressSiz
 		unsigned int low12bits=(linearAddr&(MemoryAccess::MEMORY_WINDOW_SIZE-1));
 		if(low12bits<=MemoryAccess::MEMORY_WINDOW_SIZE-4)
 		{
-			cpputil::PutDword(state.SSESPWindow.ptr+low12bits,data);
+			if(nullptr!=traceRecorder && traceRecorder->IsActive())
+			{
+				uint32_t oldVal=cpputil::GetDword(state.SSESPWindow.ptr+low12bits);
+				cpputil::PutDword(state.SSESPWindow.ptr+low12bits,data);
+				traceRecorder->OnMemWrite(state.LinearPC(),linearAddr,4,oldVal,data);
+			}
+			else
+			{
+				cpputil::PutDword(state.SSESPWindow.ptr+low12bits,data);
+			}
 			return;
 		}
 	}
@@ -4214,7 +4301,16 @@ inline void i486DXFidelityLayer<FIDELITY>::StoreDword(Memory &mem,int addressSiz
 			return;
 		}
 	}
-	mem.StoreDword(physicalAddr,data);
+	if(nullptr!=traceRecorder && traceRecorder->IsActive())
+	{
+		uint32_t oldVal=mem.FetchDword(physicalAddr);
+		mem.StoreDword(physicalAddr,data);
+		traceRecorder->OnMemWrite(state.LinearPC(),linearAddr,4,oldVal,data);
+	}
+	else
+	{
+		mem.StoreDword(physicalAddr,data);
+	}
 }
 
 template <class FIDELITY>

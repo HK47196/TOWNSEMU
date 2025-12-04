@@ -1101,6 +1101,7 @@ inline unsigned int i486DXFidelityLayer<FIDELITY>::CALLF(Memory &mem,uint16_t op
 
 	auto prevCS=state.CS().value;
 	auto returnEIP=state.EIP+instNumBytes;
+	auto origLinearPC=state.LinearPC();
 
 	if(true==enableCallStack)
 	{
@@ -1111,7 +1112,6 @@ inline unsigned int i486DXFidelityLayer<FIDELITY>::CALLF(Memory &mem,uint16_t op
 		    newCS,newEIP,
 		    mem);
 	}
-
 	if(MODE_NATIVE!=state.mode) // <-> (true==IsInRealMode() || true==GetVM())
 	{
 		LoadSegmentRegister(state.CS(),newCS,mem);
@@ -1216,6 +1216,16 @@ inline unsigned int i486DXFidelityLayer<FIDELITY>::CALLF(Memory &mem,uint16_t op
 				Push16(mem,copyParams[copyParamCount-1-i]);
 			}
 		}
+	}
+
+	if(nullptr!=traceRecorder && traceRecorder->IsActive())
+	{
+		traceRecorder->OnCall(
+		    origLinearPC,
+		    state.LinearPC(),
+		    state.ESP(),
+		    TraceRecorder::CALL_FAR,
+		    0);
 	}
 
 	Push(mem,opSize,prevCS,returnEIP);
@@ -2155,6 +2165,10 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 	{
 		debuggerPtr->BeforeRunOneInstruction(*this,mem,io,inst);
 		fidelity.BeforeRunOneInstruction(*this,inst,debuggerPtr);
+	}
+	if(nullptr!=traceRecorder && traceRecorder->IsActive())
+	{
+		traceRecorder->OnInstruction();
 	}
 
 	int EIPIncrement=inst.numBytes;
@@ -3288,6 +3302,15 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 				    state.CS().value,state.EIP,inst.numBytes,
 				    state.CS().value,destin,
 				    mem);
+			}
+			if(nullptr!=traceRecorder && traceRecorder->IsActive())
+			{
+				traceRecorder->OnCall(
+				    state.LinearPC(),
+				    state.CS().baseLinearAddr+destin,
+				    state.ESP(),
+				    TraceRecorder::CALL_NEAR,
+				    0);
 			}
 
 			state.EIP=destin;
@@ -5177,6 +5200,20 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 							    state.CS().value,state.EIP,inst.numBytes,
 							    state.CS().value,value.GetAsDword(),
 							    mem);
+						}
+						if(nullptr!=traceRecorder && traceRecorder->IsActive())
+						{
+							uint32_t target=value.GetAsDword();
+							if(16==inst.operandSize)
+							{
+								target&=0xFFFF;
+							}
+							traceRecorder->OnCall(
+							    state.LinearPC(),
+							    state.CS().baseLinearAddr+target,
+							    state.ESP(),
+							    TraceRecorder::CALL_INDIRECT_NEAR,
+							    0);
 						}
 						EIPIncrement=0;
 						state.EIP=value.GetAsDword();
@@ -7412,6 +7449,7 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 	case I486_RENUMBER_RET://              0xC3,
 		clocksPassed=5;
 		{
+			auto origPC=state.LinearPC();
 			SAVE_ESP_BEFORE_PUSH_POP;
 			if(16==inst.operandSize)
 			{
@@ -7430,10 +7468,19 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 			{
 				PopCallStack(state.CS().value,state.EIP);
 			}
+			if(nullptr!=traceRecorder && traceRecorder->IsActive())
+			{
+				traceRecorder->OnRet(
+				    origPC,
+				    state.LinearPC(),
+				    state.ESP(),
+				    TraceRecorder::RET_NEAR);
+			}
 		}
 		break;
 	case I486_RENUMBER_IRET://   0xCF,
 		{
+			auto origPC=state.LinearPC();
 			if(true==IsInRealMode())
 			{
 				clocksPassed=15;
@@ -7469,6 +7516,14 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 				if(true==enableCallStack)
 				{
 					PopCallStack(state.CS().value,state.EIP);
+				}
+				if(nullptr!=traceRecorder && traceRecorder->IsActive())
+				{
+					traceRecorder->OnRet(
+					    origPC,
+					    state.LinearPC(),
+					    state.ESP(),
+					    TraceRecorder::RET_IRET);
 				}
 			}
 			else
@@ -7556,6 +7611,14 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 				{
 					PopCallStack(state.CS().value,state.EIP);
 				}
+				if(nullptr!=traceRecorder && traceRecorder->IsActive())
+				{
+					traceRecorder->OnRet(
+					    origPC,
+					    state.LinearPC(),
+					    state.ESP(),
+					    TraceRecorder::RET_IRET);
+				}
 
 				if(state.CS().DPL>CPL && 0==(state.EFLAGS&EFLAGS_VIRTUAL86))
 				{
@@ -7608,6 +7671,7 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 		break;
 	case I486_RENUMBER_RETF://             0xCB,
 		{
+			auto origPC=state.LinearPC();
 			if(true==IsInRealMode())
 			{
 				clocksPassed=13;
@@ -7632,6 +7696,14 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 			{
 				PopCallStack(state.CS().value,state.EIP);
 			}
+			if(nullptr!=traceRecorder && traceRecorder->IsActive())
+			{
+				traceRecorder->OnRet(
+				    origPC,
+				    state.LinearPC(),
+				    state.ESP(),
+				    TraceRecorder::RET_FAR);
+			}
 
 			fidelity.CheckRETFtoOuterLevel(*this,mem,inst.operandSize,prevDPL,0);
 
@@ -7644,20 +7716,30 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 	case I486_RENUMBER_RET_I16://          0xC2,
 		clocksPassed=5;
 		{
+			auto origPC=state.LinearPC();
 			SAVE_ESP_BEFORE_PUSH_POP;
 			auto EIP=Pop(mem,inst.operandSize);
 			HANDLE_EXCEPTION_PUSH_POP;
 			SetIPorEIP(inst.operandSize,EIP);
-		}
-		state.ESP()+=inst.EvalUimm16(); // Do I need to take &0xffff if address mode is 16? 
-		EIPIncrement=0;
-		if(enableCallStack)
-		{
-			PopCallStack(state.CS().value,state.EIP);
+			state.ESP()+=inst.EvalUimm16(); // Do I need to take &0xffff if address mode is 16?
+			EIPIncrement=0;
+			if(enableCallStack)
+			{
+				PopCallStack(state.CS().value,state.EIP);
+			}
+			if(nullptr!=traceRecorder && traceRecorder->IsActive())
+			{
+				traceRecorder->OnRet(
+				    origPC,
+				    state.LinearPC(),
+				    state.ESP(),
+				    TraceRecorder::RET_NEAR);
+			}
 		}
 		break;
 	case I486_RENUMBER_RETF_I16://         0xCA,
 		{
+			auto origPC=state.LinearPC();
 			if(true==IsInRealMode())
 			{
 				clocksPassed=14;
@@ -7684,10 +7766,18 @@ unsigned int i486DXFidelityLayer<FIDELITY>::RunOneInstruction(Memory &mem,InOut 
 			{
 				PopCallStack(state.CS().value,state.EIP);
 			}
+			if(nullptr!=traceRecorder && traceRecorder->IsActive())
+			{
+				traceRecorder->OnRet(
+				    origPC,
+				    state.LinearPC(),
+				    state.ESP(),
+				    TraceRecorder::RET_FAR);
+			}
 			if(true!=fidelity.CheckRETFtoOuterLevel(*this,mem,inst.operandSize,prevDPL,inst.EvalUimm16()))
 			{
 				// true means IMM16 is already consumed in CheckRETFtoOuterLevel.
-				state.ESP()+=inst.EvalUimm16(); // Do I need to take &0xffff if address mode is 16? 
+				state.ESP()+=inst.EvalUimm16(); // Do I need to take &0xffff if address mode is 16?
 			}
 			else
 			{
